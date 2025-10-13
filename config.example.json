@@ -1,0 +1,107 @@
+{
+  "_comments": {
+    "description": "DEX Trading Telegram Bot配置示例文件",
+    "instructions": "复制此文件为config.json并填入您的配置信息",
+    "version": "1.0.0",
+    "last_updated": "2025-10-13"
+  },
+  "telegram": {
+    "bot_token": "your_bot_token_here",
+    "chat_id": "your_chat_id_here",
+    "webhook_url": "",
+    "webhook_port": 8443,
+    "allowed_users": [],
+    "admin_users": [],
+    "user_roles": {
+      "123456789": "admin",
+      "987654321": "trader"
+    }
+  },
+  "exchanges": {
+    "hyperliquid": {
+      "enabled": true,
+      "account_address": "0x...",
+      "secret_key": "0x...",
+      "base_url": "https://api.hyperliquid.xyz",
+      "rate_limit": {
+        "requests_per_minute": 60,
+        "burst_limit": 10
+      }
+    },
+    "aster": {
+      "enabled": true,
+      "api_key": "your_aster_api_key",
+      "api_secret": "your_aster_api_secret",
+      "base_url": "https://fapi.asterdex.com",
+      "spot_base_url": "https://sapi.asterdex.com",
+      "rate_limit": {
+        "requests_per_minute": 1200,
+        "weight_limit": 1200
+      }
+    }
+  },
+  "trading": {
+    "default_leverage": 1,
+    "max_leverage": 10,
+    "min_order_size": 10.0,
+    "max_order_size": 500.0,
+    "default_slippage": 0.01,
+    "order_timeout": 30,
+    "position_limits": {
+      "max_positions_per_symbol": 1,
+      "max_total_positions": 10,
+      "max_position_size_usd": 5000.0
+    }
+  },
+  "risk_management": {
+    "daily_loss_limit": 100.0,
+    "max_drawdown_percent": 10.0,
+    "emergency_stop_enabled": true,
+    "position_size_limit": 0.1,
+    "correlation_limit": 0.8
+  },
+  "alerts": {
+    "price_alerts": {
+      "enabled": true,
+      "max_alerts_per_user": 20,
+      "check_interval": 5
+    },
+    "funding_rate_alerts": {
+      "enabled": true,
+      "threshold": 0.0001,
+      "check_interval": 60
+    },
+    "position_alerts": {
+      "enabled": true,
+      "pnl_threshold": 50.0,
+      "margin_ratio_threshold": 0.2
+    }
+  },
+  "storage": {
+    "type": "csv",
+    "data_dir": "data",
+    "backup_enabled": true,
+    "backup_interval_hours": 24
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/bot.log",
+    "max_bytes": 10485760,
+    "backup_count": 5,
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  },
+  "security": {
+    "encryption_key": "your_32_byte_encryption_key_here",
+    "session_timeout": 3600,
+    "max_login_attempts": 5,
+    "lockout_duration": 300
+  },
+  "features": {
+    "spot_trading": true,
+    "futures_trading": true,
+    "funding_rate_monitoring": true,
+    "portfolio_tracking": true,
+    "backtesting": false,
+    "paper_trading": false
+  }
+}
