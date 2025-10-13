@@ -43,7 +43,7 @@
 
 1. **克隆项目**
 ```bash
-git clone https://github.com/your-username/dex-tg-bot.git
+git clone https://github.com/walker1992/dex-tg-bot.git
 cd dex-tg-bot
 ```
 
@@ -264,8 +264,8 @@ mypy src/
 
 ## 🤝 支持
 
-- **问题报告**: [GitHub Issues](https://github.com/your-username/dex-tg-bot/issues)
-- **功能请求**: [GitHub Discussions](https://github.com/your-username/dex-tg-bot/discussions)
+- **问题报告**: [GitHub Issues](https://github.com/walker1992/dex-tg-bot/issues)
+- **功能请求**: [GitHub Discussions](https://github.com/walker1992/dex-tg-bot/discussions)
 - **社区交流**: [Discord服务器](https://discord.gg/your-invite)
 
 ## ⚠️ 免责声明
