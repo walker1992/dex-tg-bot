@@ -12,7 +12,7 @@ eth-account>=0.8.0
 
 # Data handling
 typing-extensions>=4.0.0
-pandas>=1.5.0
+# pandas>=1.5.0  # Commented out due to compilation issues on CentOS with GCC 4.8.5
 
 # Configuration and validation
 pydantic>=1.10.0
