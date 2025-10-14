@@ -73,7 +73,7 @@ class HyperliquidClient(ExchangeService):
             await self.get_account_info()
             
             self.is_connected = True
-            logger.info("Connected to Hyperliquid successfully")
+            # Connection logging removed to reduce verbosity
             return True
             
         except Exception as e:

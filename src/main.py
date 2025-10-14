@@ -27,8 +27,8 @@ from bot.utils.exceptions import BotError
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,  # Reduced from INFO to WARNING
+    format='%(asctime)s - %(levelname)s - %(message)s'  # Simplified format
 )
 logger = logging.getLogger(__name__)
 
@@ -240,22 +240,18 @@ class TradingBot:
                 await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
                 
             elif data == "menu_orders":
-                # Show orders information directly
-                message = """
-📋 **Open Orders**
+                # Build orders info using real data (consistent with balance/positions)
+                try:
+                    service_manager = self.service_manager
+                    if not service_manager:
+                        message = "❌ Service manager not available. Please try again later."
+                    else:
+                        from bot.handlers.trading import _get_all_orders_message
+                        message = await _get_all_orders_message(service_manager)
+                except Exception as e:
+                    logger.error(f"Error fetching orders in menu callback: {e}")
+                    message = "❌ Failed to fetch orders. Please check your exchange connections."
 
-**Hyperliquid:**
-• BTC-PERP: Buy 0.05 BTC @ $48,000 (Limit)
-• ETH-PERP: Sell 0.5 ETH @ $3,200 (Limit)
-
-**Aster:**
-• BTCUSDT: Buy 0.1 BTC @ $47,000 (Limit)
-• ETHUSDT: Sell 1.0 ETH @ $3,100 (Limit)
-
-**Total Open Orders:** 4
-
-Use /orders [exchange] for detailed order information.
-                """
                 # Add back button
                 from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
                 back_keyboard = InlineKeyboardMarkup([

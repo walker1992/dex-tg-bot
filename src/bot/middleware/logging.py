@@ -17,46 +17,15 @@ class LoggingMiddleware:
         self.request_count = 0
     
     async def log_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Log incoming requests"""
+        """Log incoming requests - simplified to only log errors and slow requests"""
         start_time = time.time()
         self.request_count += 1
         
         # Extract request information
         user_id = update.effective_user.id if update.effective_user else None
         username = update.effective_user.username if update.effective_user else None
-        chat_id = update.effective_chat.id if update.effective_chat else None
         
-        # Log message content
-        message_text = ""
-        if update.effective_message:
-            message_text = update.effective_message.text or ""
-        
-        # Log callback query
-        callback_data = ""
-        if update.callback_query:
-            callback_data = update.callback_query.data or ""
-        
-        # Determine request type
-        request_type = "unknown"
-        if update.effective_message and update.effective_message.text:
-            if update.effective_message.text.startswith("/"):
-                request_type = "command"
-            else:
-                request_type = "message"
-        elif update.callback_query:
-            request_type = "callback"
-        
-        # Log request
-        logger.info(
-            f"Request #{self.request_count} | "
-            f"Type: {request_type} | "
-            f"User: {user_id} (@{username}) | "
-            f"Chat: {chat_id} | "
-            f"Content: {message_text[:100]}{'...' if len(message_text) > 100 else ''} | "
-            f"Callback: {callback_data}"
-        )
-        
-        # Log errors if any
+        # Only log errors
         if context.error:
             logger.error(
                 f"Request #{self.request_count} | "
@@ -64,11 +33,11 @@ class LoggingMiddleware:
                 f"User: {user_id} (@{username})"
             )
         
-        # Log response time
+        # Log response time only for slow requests (>2s instead of 1s)
         end_time = time.time()
         response_time = end_time - start_time
         
-        if response_time > 1.0:  # Log slow requests
+        if response_time > 2.0:  # Increased threshold and only log slow requests
             logger.warning(
                 f"Request #{self.request_count} | "
                 f"Slow request: {response_time:.2f}s | "
@@ -92,14 +61,15 @@ class SecurityLogger:
         )
     
     def log_config_change(self, user_id: int, config_key: str, old_value, new_value):
-        """Log configuration change"""
-        self.logger.info(
-            f"Config change | "
-            f"User: {user_id} | "
-            f"Key: {config_key} | "
-            f"Old: {old_value} | "
-            f"New: {new_value}"
-        )
+        """Log configuration change - only log important changes"""
+        # Only log sensitive config changes
+        if config_key in ['api_key', 'secret_key', 'passphrase']:
+            self.logger.warning(
+                f"Config change | "
+                f"User: {user_id} | "
+                f"Key: {config_key} | "
+                f"Changed"
+            )
     
     def log_unauthorized_access(self, user_id: int, action: str, details: dict):
         """Log unauthorized access attempt"""
@@ -111,13 +81,15 @@ class SecurityLogger:
         )
     
     def log_api_key_usage(self, user_id: int, exchange: str, action: str):
-        """Log API key usage"""
-        self.logger.info(
-            f"API key usage | "
-            f"User: {user_id} | "
-            f"Exchange: {exchange} | "
-            f"Action: {action}"
-        )
+        """Log API key usage - only log errors and sensitive actions"""
+        # Only log sensitive actions
+        if action in ['create', 'delete', 'update']:
+            self.logger.warning(
+                f"API key usage | "
+                f"User: {user_id} | "
+                f"Exchange: {exchange} | "
+                f"Action: {action}"
+            )
 
 
 class PerformanceLogger:
@@ -128,14 +100,17 @@ class PerformanceLogger:
         self.metrics = {}
     
     def log_api_call(self, exchange: str, endpoint: str, duration: float, success: bool):
-        """Log API call performance"""
-        self.logger.info(
-            f"API call | "
-            f"Exchange: {exchange} | "
-            f"Endpoint: {endpoint} | "
-            f"Duration: {duration:.3f}s | "
-            f"Success: {success}"
-        )
+        """Log API call performance - only log failures and slow calls"""
+        # Only log failures or slow calls (>1s)
+        if not success or duration > 1.0:
+            level = "error" if not success else "warning"
+            getattr(self.logger, level)(
+                f"API call | "
+                f"Exchange: {exchange} | "
+                f"Endpoint: {endpoint} | "
+                f"Duration: {duration:.3f}s | "
+                f"Success: {success}"
+            )
         
         # Track metrics
         key = f"{exchange}_{endpoint}"

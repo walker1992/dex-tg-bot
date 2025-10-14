@@ -39,7 +39,7 @@ class AsterWebSocketService(WebSocketService):
             # Start message handler
             asyncio.create_task(self._message_handler())
             
-            logger.info("Connected to Aster WebSocket")
+            # WebSocket connection logging removed to reduce verbosity
             return True
             
         except Exception as e:
@@ -59,7 +59,7 @@ class AsterWebSocketService(WebSocketService):
             await self._close_user_data_stream()
         
         self.subscriptions.clear()
-        logger.info("Disconnected from Aster WebSocket")
+        # WebSocket disconnection logging removed to reduce verbosity
     
     async def subscribe_ticker(self, symbol: str, callback: Callable) -> bool:
         """Subscribe to ticker updates"""
@@ -80,7 +80,7 @@ class AsterWebSocketService(WebSocketService):
             }
             
             await self.websocket.send(json.dumps(subscribe_msg))
-            logger.info(f"Subscribed to ticker updates for {symbol}")
+            # Ticker subscription logging removed to reduce verbosity
             return True
             
         except Exception as e:
@@ -106,7 +106,7 @@ class AsterWebSocketService(WebSocketService):
             }
             
             await self.websocket.send(json.dumps(subscribe_msg))
-            logger.info(f"Subscribed to order book updates for {symbol}")
+            # Order book subscription logging removed to reduce verbosity
             return True
             
         except Exception as e:

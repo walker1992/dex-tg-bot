@@ -149,11 +149,11 @@ class StorageConfig:
 @dataclass
 class LoggingConfig:
     """Logging configuration"""
-    level: str = "INFO"
+    level: str = "WARNING"  # Reduced from INFO to WARNING to minimize logs
     file: str = "logs/bot.log"
     max_bytes: int = 10485760  # 10MB
     backup_count: int = 5
-    format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format: str = "%(asctime)s - %(levelname)s - %(message)s"  # Simplified format
 
 
 @dataclass
@@ -254,7 +254,7 @@ class ConfigManager:
             # Validate configuration
             self.validate_config()
             
-            logger.info(f"Configuration loaded from {self.config_path}")
+            # Configuration loading logging removed to reduce verbosity
             return self.config
             
         except Exception as e:
@@ -283,7 +283,7 @@ class ConfigManager:
             with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(config_dict, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"Configuration saved to {self.config_path}")
+            # Configuration saving logging removed to reduce verbosity
             
         except Exception as e:
             raise ConfigurationError(f"Failed to save configuration: {e}")
@@ -324,7 +324,7 @@ class ConfigManager:
         if len(self.config.security.encryption_key) < 32:
             raise ValidationError("Encryption key must be at least 32 characters")
         
-        logger.info("Configuration validation passed")
+        # Configuration validation logging removed to reduce verbosity
     
     def get_exchange_config(self, exchange_name: str) -> Optional[Union[HyperliquidConfig, AsterConfig]]:
         """Get exchange configuration"""

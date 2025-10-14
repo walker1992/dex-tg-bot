@@ -2,6 +2,7 @@
 Trading Command Handlers
 """
 import logging
+from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -9,6 +10,94 @@ from bot.middleware.auth import require_user
 from bot.utils.exceptions import BotError, ValidationError
 
 logger = logging.getLogger(__name__)
+async def _get_all_orders_message(service_manager, exchange: Optional[str] = None, market_filter: Optional[str] = None) -> str:
+    """Build an orders message for all or specific exchanges/markets"""
+    try:
+        # Fetch orders from exchanges
+        all_orders = []
+        exchanges_to_check = [exchange] if exchange else ['hyperliquid', 'aster']
+
+        for ex in exchanges_to_check:
+            try:
+                # For Hyperliquid, use a single service to avoid duplicate orders
+                if ex == 'hyperliquid':
+                    service = service_manager.get_spot_service(ex)
+                    if not service or not service_manager.is_service_connected(ex, "spot"):
+                        service = service_manager.get_futures_service(ex)
+                        if not service or not service_manager.is_service_connected(ex, "futures"):
+                            continue
+                    orders = await service.get_open_orders()
+                    for order in orders:
+                        order_info = {
+                            'order': order,
+                            'exchange': ex,
+                            'market_type': 'Mixed'  # Will be determined later based on coin suffix
+                        }
+                        all_orders.append(order_info)
+                else:
+                    # For other exchanges, check both spot and futures separately
+                    if market_filter is None or market_filter == 'spot':
+                        spot_service = service_manager.get_spot_service(ex)
+                        if spot_service and service_manager.is_service_connected(ex, "spot"):
+                            spot_orders = await spot_service.get_open_orders()
+                            for order in spot_orders:
+                                order_info = {
+                                    'order': order,
+                                    'exchange': ex,
+                                    'market_type': 'Spot'
+                                }
+                                all_orders.append(order_info)
+
+                    if market_filter is None or market_filter == 'futures':
+                        futures_service = service_manager.get_futures_service(ex)
+                        if futures_service and service_manager.is_service_connected(ex, "futures"):
+                            futures_orders = await futures_service.get_open_orders()
+                            for order in futures_orders:
+                                order_info = {
+                                    'order': order,
+                                    'exchange': ex,
+                                    'market_type': 'Futures'
+                                }
+                                all_orders.append(order_info)
+            except Exception as e:
+                logger.error(f"Error fetching orders from {ex}: {e}")
+                continue
+
+        # Format orders message
+        if not all_orders:
+            return "📋 **Open Orders**\n\nNo open orders found."
+
+        message = f"📋 **Open Orders** ({len(all_orders)} total)\n\n"
+        # Group orders by exchange
+        orders_by_exchange = {}
+        for order_info in all_orders:
+            ex_title = order_info['exchange'].title()
+            if ex_title not in orders_by_exchange:
+                orders_by_exchange[ex_title] = []
+            orders_by_exchange[ex_title].append(order_info)
+
+        for ex_title, order_infos in orders_by_exchange.items():
+            message += f"**{ex_title}:**\n"
+            for order_info in order_infos:
+                order = order_info['order']
+                side_emoji = "🟢" if order.side.value == "BUY" else "🔴"
+                price_text = f"${order.price:,.4f}" if order.price else "Market"
+
+                # For Hyperliquid, determine market type based on coin suffix
+                if ex_title == "Hyperliquid":
+                    is_spot = _is_spot_coin(order.symbol)
+                    market_type = "Spot" if is_spot else "Perp"
+                else:
+                    market_type = order_info['market_type']
+
+                message += f"• {side_emoji} {order.symbol} ({market_type}): {order.side.value} {order.quantity} @ {price_text}\n"
+                message += f"  Order ID: {order.order_id} | Status: {order.status.value}\n"
+            message += "\n"
+
+        return message
+    except Exception as e:
+        logger.error(f"Error building orders message: {e}")
+        return "📋 **Open Orders**\n\n❌ Failed to fetch orders."
 
 
 @require_user
@@ -56,7 +145,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ Failed to fetch balance data. Please check your exchange connections."
             )
         
-        logger.info(f"Balance command executed by user {user.id} (@{user.username}) for exchange: {exchange or 'all'}")
+        # Command execution logging removed to reduce verbosity
         
     except Exception as e:
         logger.error(f"Error in balance handler: {e}")
@@ -149,7 +238,7 @@ async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(message, parse_mode='Markdown')
         
-        logger.info(f"Positions command executed by user {user.id} (@{user.username}) for exchange: {exchange or 'all'}")
+        # Command execution logging removed to reduce verbosity
         
     except Exception as e:
         logger.error(f"Error in positions handler: {e}")
@@ -168,7 +257,25 @@ async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Parse command arguments
         args = context.args
-        exchange = args[0].lower() if args else None
+        exchange = None
+        market_type = None  # None = both, 'spot' = spot only, 'futures' = futures only
+        
+        if args:
+            if len(args) == 1:
+                # /orders hyperliquid or /orders spot
+                if args[0].lower() in ['hyperliquid', 'aster']:
+                    exchange = args[0].lower()
+                elif args[0].lower() == 'spot':
+                    market_type = 'spot'
+                elif args[0].lower() == 'futures':
+                    market_type = 'futures'
+            elif len(args) == 2:
+                # /orders hyperliquid spot or /orders aster futures
+                exchange = args[0].lower()
+                if args[1].lower() == 'spot':
+                    market_type = 'spot'
+                elif args[1].lower() == 'futures':
+                    market_type = 'futures'
         
         if exchange and exchange not in ['hyperliquid', 'aster']:
             await update.message.reply_text(
@@ -184,69 +291,20 @@ async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Fetch orders from exchanges
-        all_orders = []
-        exchanges_to_check = [exchange] if exchange else ['hyperliquid', 'aster']
+        # Build message via helper for reuse with menu callback
+        message = await _get_all_orders_message(service_manager, exchange=exchange, market_filter=market_type)
         
-        for ex in exchanges_to_check:
-            try:
-                # Check spot orders
-                spot_service = service_manager.get_spot_service(ex)
-                if spot_service and service_manager.is_service_connected(ex, "spot"):
-                    spot_orders = await spot_service.get_open_orders()
-                    for order in spot_orders:
-                        order_info = {
-                            'order': order,
-                            'exchange': ex,
-                            'market_type': 'Spot'
-                        }
-                        all_orders.append(order_info)
-                
-                # Check futures orders
-                futures_service = service_manager.get_futures_service(ex)
-                if futures_service and service_manager.is_service_connected(ex, "futures"):
-                    futures_orders = await futures_service.get_open_orders()
-                    for order in futures_orders:
-                        order_info = {
-                            'order': order,
-                            'exchange': ex,
-                            'market_type': 'Futures'
-                        }
-                        all_orders.append(order_info)
-                        
-            except Exception as e:
-                logger.error(f"Error fetching orders from {ex}: {e}")
-                continue
-        
-        # Format orders message
-        if not all_orders:
-            message = "📋 **Open Orders**\n\nNo open orders found."
+        # If called from a callback button, include a back button
+        is_callback = hasattr(update, 'callback_query') and update.callback_query is not None
+        if is_callback:
+            from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+            back_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back to Main", callback_data="menu_main")]
+            ])
+            await update.message.reply_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
         else:
-            message = f"📋 **Open Orders** ({len(all_orders)} total)\n\n"
-            
-            # Group orders by exchange
-            orders_by_exchange = {}
-            for order_info in all_orders:
-                ex = order_info['exchange'].title()
-                if ex not in orders_by_exchange:
-                    orders_by_exchange[ex] = []
-                orders_by_exchange[ex].append(order_info)
-            
-            for ex, order_infos in orders_by_exchange.items():
-                message += f"**{ex}:**\n"
-                for order_info in order_infos:
-                    order = order_info['order']
-                    side_emoji = "🟢" if order.side.value == "BUY" else "🔴"
-                    price_text = f"${order.price:,.4f}" if order.price else "Market"
-                    market_type = order_info['market_type']
-                    
-                    message += f"• {side_emoji} {order.symbol} ({market_type}): {order.side.value} {order.quantity} @ {price_text}\n"
-                    message += f"  Order ID: {order.order_id} | Status: {order.status.value}\n"
-                message += "\n"
+            await update.message.reply_text(message, parse_mode='Markdown')
         
-        await update.message.reply_text(message, parse_mode='Markdown')
-        
-        logger.info(f"Orders command executed by user {user.id} (@{user.username}) for exchange: {exchange or 'all'}")
         
     except Exception as e:
         logger.error(f"Error in orders handler: {e}")
@@ -273,15 +331,28 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(args) < 2:
             await message.reply_text(
                 "❌ Invalid command format.\n"
-                "Usage: /buy <symbol> <quantity> [price] [exchange]\n"
-                "Example: /buy BTC 0.1 50000 hyperliquid"
+                "Usage: /buy <symbol> <quantity> [price] [exchange] [spot]\n"
+                "Examples:\n"
+                "• /buy BTC 0.1 50000 hyperliquid (futures)\n"
+                "• /buy BTC 0.1 50000 hyperliquid spot (spot)"
             )
             return
         
         symbol = args[0].upper()
         quantity = float(args[1])
         price = float(args[2]) if len(args) > 2 and args[2] != 'market' else None
-        exchange = args[3].lower() if len(args) > 3 else 'hyperliquid'
+        
+        # Parse exchange and market type
+        if len(args) > 3:
+            exchange = args[3].lower()
+            # Check if the last argument is 'spot'
+            is_spot = len(args) > 4 and args[4].lower() == 'spot'
+        else:
+            exchange = 'hyperliquid'
+            is_spot = False
+        
+        # Debug logging
+        # Command args logging removed to reduce verbosity
         
         # Define price_text for logging
         price_text = "Market Price" if price is None else f"${price:,.2f}"
@@ -314,11 +385,12 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             # Place the actual order
-            order_result = await _place_buy_order(service_manager, exchange, symbol, quantity, price)
+            order_result = await _place_buy_order(service_manager, exchange, symbol, quantity, price, is_spot)
             
             if order_result['success']:
                 order_type = "Market" if price is None else "Limit"
                 price_text = "Market Price" if price is None else f"${price:,.2f}"
+                market_type = "Spot" if is_spot else "Perp"
                 
                 # Log trade to CSV
                 try:
@@ -336,7 +408,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         order_id=order_result.get('order_id', 'N/A')
                     )
                     storage.create_trade(trade)
-                    logger.info(f"Trade logged to CSV: {trade.side} {trade.quantity} {trade.symbol} on {trade.exchange}")
+                    # Trade logging to CSV removed to reduce verbosity
                 except Exception as e:
                     logger.error(f"Failed to log trade to CSV: {e}")
                 
@@ -344,6 +416,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✅ **Buy Order Placed**
 
 **Exchange:** {exchange.title()}
+**Market:** {market_type}
 **Symbol:** {symbol}
 **Side:** Buy
 **Type:** {order_type}
@@ -405,15 +478,28 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(args) < 2:
             await message.reply_text(
                 "❌ Invalid command format.\n"
-                "Usage: /sell <symbol> <quantity> [price] [exchange]\n"
-                "Example: /sell BTC 0.1 50000 hyperliquid"
+                "Usage: /sell <symbol> <quantity> [price] [exchange] [spot]\n"
+                "Examples:\n"
+                "• /sell BTC 0.1 50000 hyperliquid (futures)\n"
+                "• /sell BTC 0.1 50000 hyperliquid spot (spot)"
             )
             return
         
         symbol = args[0].upper()
         quantity = float(args[1])
         price = float(args[2]) if len(args) > 2 and args[2] != 'market' else None
-        exchange = args[3].lower() if len(args) > 3 else 'hyperliquid'
+        
+        # Parse exchange and market type
+        if len(args) > 3:
+            exchange = args[3].lower()
+            # Check if the last argument is 'spot'
+            is_spot = len(args) > 4 and args[4].lower() == 'spot'
+        else:
+            exchange = 'hyperliquid'
+            is_spot = False
+        
+        # Debug logging
+        # Command args logging removed to reduce verbosity
         
         # Define price_text for logging
         price_text = "Market Price" if price is None else f"${price:,.2f}"
@@ -446,11 +532,12 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             # Place the actual order
-            order_result = await _place_sell_order(service_manager, exchange, symbol, quantity, price)
+            order_result = await _place_sell_order(service_manager, exchange, symbol, quantity, price, is_spot)
             
             if order_result['success']:
                 order_type = "Market" if price is None else "Limit"
                 price_text = "Market Price" if price is None else f"${price:,.2f}"
+                market_type = "Spot" if is_spot else "Perp"
                 
                 # Log trade to CSV
                 try:
@@ -468,7 +555,7 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         order_id=order_result.get('order_id', 'N/A')
                     )
                     storage.create_trade(trade)
-                    logger.info(f"Trade logged to CSV: {trade.side} {trade.quantity} {trade.symbol} on {trade.exchange}")
+                    # Trade logging to CSV removed to reduce verbosity
                 except Exception as e:
                     logger.error(f"Failed to log trade to CSV: {e}")
                 
@@ -476,6 +563,7 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✅ **Sell Order Placed**
 
 **Exchange:** {exchange.title()}
+**Market:** {market_type}
 **Symbol:** {symbol}
 **Side:** Sell
 **Type:** {order_type}
@@ -783,7 +871,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(message, parse_mode='Markdown')
         
-        logger.info(f"Price command executed by user {user.id} (@{user.username}): {symbol} on {exchange}")
+        # Command execution logging removed to reduce verbosity
         
     except Exception as e:
         logger.error(f"Error in price handler: {e}")
@@ -846,7 +934,7 @@ $50,025.00 | 2.2 {symbol}
         
         await update.message.reply_text(message, parse_mode='Markdown')
         
-        logger.info(f"Depth command executed by user {user.id} (@{user.username}): {symbol} on {exchange}")
+        # Command execution logging removed to reduce verbosity
         
     except Exception as e:
         logger.error(f"Error in depth handler: {e}")
@@ -906,7 +994,7 @@ async def funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(message, parse_mode='Markdown')
         
-        logger.info(f"Funding command executed by user {user.id} (@{user.username}): {symbol} on {exchange}")
+        # Command execution logging removed to reduce verbosity
         
     except Exception as e:
         logger.error(f"Error in funding handler: {e}")
@@ -961,7 +1049,7 @@ async def trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ Failed to fetch trade history. Please try again later."
             )
         
-        logger.info(f"Trade history command executed by user {user.id} (@{user.username})")
+        # Command execution logging removed to reduce verbosity
         
     except Exception as e:
         logger.error(f"Error in trades handler: {e}")
@@ -1028,7 +1116,7 @@ async def stats_24h(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(message, parse_mode='Markdown')
         
-        logger.info(f"24h stats command executed by user {user.id} (@{user.username}): {symbol} on {exchange}")
+        # Command execution logging removed to reduce verbosity
         
     except Exception as e:
         logger.error(f"Error in 24h stats handler: {e}")
@@ -1577,14 +1665,14 @@ def _extract_position_lines_from_message(message: str) -> str:
 
 # Trading Functions
 
-async def _place_buy_order(service_manager, exchange: str, symbol: str, quantity: float, price: float = None) -> dict:
+async def _place_buy_order(service_manager, exchange: str, symbol: str, quantity: float, price: float = None, is_spot: bool = False) -> dict:
     """Place a buy order"""
     try:
         from services.base import OrderSide, OrderType, TimeInForce
         from decimal import Decimal
         
-        # Determine if this is spot or futures trading
-        is_futures = _is_futures_symbol(symbol)
+        # Use explicit spot/futures flag instead of symbol detection
+        is_futures = not is_spot
         
         if is_futures:
             service = service_manager.get_futures_service(exchange)
@@ -1635,14 +1723,14 @@ async def _place_buy_order(service_manager, exchange: str, symbol: str, quantity
         return {"success": False, "error": str(e)}
 
 
-async def _place_sell_order(service_manager, exchange: str, symbol: str, quantity: float, price: float = None) -> dict:
+async def _place_sell_order(service_manager, exchange: str, symbol: str, quantity: float, price: float = None, is_spot: bool = False) -> dict:
     """Place a sell order"""
     try:
         from services.base import OrderSide, OrderType, TimeInForce
         from decimal import Decimal
         
-        # Determine if this is spot or futures trading
-        is_futures = _is_futures_symbol(symbol)
+        # Use explicit spot/futures flag instead of symbol detection
+        is_futures = not is_spot
         
         if is_futures:
             service = service_manager.get_futures_service(exchange)
@@ -1758,6 +1846,25 @@ def _is_futures_symbol(symbol: str) -> bool:
     # For Hyperliquid, most symbols are futures by default
     # For Aster, check if it ends with USDT (common futures format)
     if symbol_upper.endswith('USDT') and not symbol_upper.endswith('USDT0'):
+        return True
+    
+    return False
+
+
+def _is_spot_coin(coin: str) -> bool:
+    """Determine if a coin is a spot trading pair based on suffix"""
+    if not coin or coin == 'N/A':
+        return False
+    
+    # Spot trading pairs have suffixes like /USDC, /USDH, /USDT
+    spot_suffixes = ['/USDC', '/USDH', '/USDT', '/USDT0']
+    
+    for suffix in spot_suffixes:
+        if coin.endswith(suffix):
+            return True
+    
+    # Also check for @{number} format which might be spot pairs
+    if coin.startswith('@') and coin[1:].isdigit():
         return True
     
     return False

@@ -62,7 +62,7 @@ class AsterClient(ExchangeService):
             await self.get_account_info()
             
             self.is_connected = True
-            logger.info("Connected to Aster successfully")
+            # Connection logging removed to reduce verbosity
             return True
             
         except Exception as e:
@@ -77,7 +77,7 @@ class AsterClient(ExchangeService):
             await self.session.close()
             self.session = None
         
-        logger.info("Disconnected from Aster")
+        # Disconnection logging removed to reduce verbosity
     
     async def _sync_server_time(self):
         """Sync server time"""
@@ -277,11 +277,7 @@ class AsterClient(ExchangeService):
                 if unrealized_pnl == 0:
                     unrealized_pnl = Decimal(str(position_data.get("pnl", 0)))
                 
-                # Debug logging for each position
-                logger.info(f"Aster position raw data - Symbol: {symbol}, PositionAmt: {position_amt}, "
-                           f"EntryPrice: {entry_price}, MarkPrice: {mark_price}, "
-                           f"UnrealizedPnl: {unrealized_pnl}, Percentage: {percentage}")
-                logger.info(f"Full position data: {position_data}")
+                # Debug logging removed to reduce verbosity
                 
                 # If unrealized_pnl is 0, try to calculate it manually
                 if unrealized_pnl == 0 and entry_price > 0 and mark_price > 0:
@@ -290,7 +286,7 @@ class AsterClient(ExchangeService):
                     else:  # Short position
                         calculated_pnl = (entry_price - mark_price) * abs(position_amt)
                     
-                    logger.info(f"Calculated PnL for {symbol}: {calculated_pnl} (Entry: {entry_price}, Mark: {mark_price}, Size: {abs(position_amt)})")
+                    # PnL calculation logging removed to reduce verbosity
                     unrealized_pnl = calculated_pnl
                 
                 # Determine side
