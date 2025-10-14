@@ -339,12 +339,39 @@ class HyperliquidClient(ExchangeService):
         if not self.exchange:
             raise ExchangeError("Not connected")
         
+        # Normalize symbol format
+        normalized_symbol = self._normalize_symbol(symbol)
+        
         try:
             is_buy = side == OrderSide.BUY
             
-            # Map order type
+            # Map order type - Hyperliquid uses limit orders with GTC by default
             if order_type == OrderType.MARKET:
-                order_type_dict = {"market": {}}
+                # For market orders, we'll use a limit order with current market price
+                # Get current market price from order book
+                try:
+                    l2 = self.info.l2_snapshot(normalized_symbol)
+                    levels = l2.get("levels", [])
+                    if side == OrderSide.BUY:
+                        # For buy orders, use best ask price
+                        asks = levels[1] if len(levels) > 1 else []
+                        if not asks:
+                            raise ExchangeError("No market data available for market order")
+                        price = Decimal(str(asks[0]["px"]))
+                    else:
+                        # For sell orders, use best bid price
+                        bids = levels[0] if len(levels) > 0 else []
+                        if not bids:
+                            raise ExchangeError("No market data available for market order")
+                        price = Decimal(str(bids[0]["px"]))
+                except Exception as e:
+                    raise ExchangeError(f"Failed to get market price: {e}")
+                
+                order_type_dict = {
+                    "limit": {
+                        "tif": "Gtc"  # Use Gtc for market orders
+                    }
+                }
             elif order_type == OrderType.LIMIT:
                 if not price:
                     raise ExchangeError("Price required for limit orders")
@@ -356,26 +383,72 @@ class HyperliquidClient(ExchangeService):
             else:
                 raise ExchangeError(f"Unsupported order type: {order_type}")
             
-            # Place order
-            result = self.exchange.order(
-                symbol,
-                is_buy,
-                float(quantity),
-                float(price) if price else 0,
-                order_type_dict
-            )
+            # Place order with simple precision handling
+            try:
+                # Convert to float with reasonable precision
+                quantity_float = float(quantity)
+                price_float = float(price) if price else 0.0
+                
+                # Round to avoid floating point precision issues
+                quantity_float = round(quantity_float, 8)
+                price_float = round(price_float, 8)
+                
+                logger.info(f"Placing order: symbol={normalized_symbol}, is_buy={is_buy}, qty={quantity_float}, price={price_float}, order_type={order_type_dict}")
+                
+                result = self.exchange.order(
+                    normalized_symbol,
+                    is_buy,
+                    quantity_float,
+                    price_float,
+                    order_type_dict
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to place order: {e}")
+                raise ExchangeError(f"Failed to place order: {e}")
             
-            # Create order object from result
-            order_id = str(result.get("oid", 0))
+            # Check if order was successful
+            if not isinstance(result, dict) or result.get("status") != "ok":
+                raise ExchangeError(f"Order failed: {result}")
+            
+            # Extract order ID from response
+            order_id = None
+            order_status = OrderStatus.REJECTED
+            
+            try:
+                response_data = result.get("response", {}).get("data", {})
+                statuses = response_data.get("statuses", [])
+                if statuses:
+                    status = statuses[0]
+                    if "resting" in status:
+                        order_id = str(status["resting"]["oid"])
+                        order_status = OrderStatus.NEW
+                    elif "filled" in status:
+                        order_id = str(status["filled"]["oid"])
+                        order_status = OrderStatus.FILLED
+                    elif "error" in status:
+                        raise ExchangeError(f"Order error: {status['error']}")
+                    else:
+                        raise ExchangeError(f"Unknown order status: {status}")
+                else:
+                    raise ExchangeError("No status in order response")
+            except Exception as e:
+                if "Order error" in str(e) or "Unknown order status" in str(e):
+                    raise e
+                else:
+                    raise ExchangeError(f"Failed to parse order response: {e}")
+            
+            if not order_id:
+                raise ExchangeError("No order ID returned from exchange")
             
             return Order(
                 order_id=order_id,
-                symbol=symbol,
+                symbol=normalized_symbol,
                 side=side,
                 order_type=order_type,
                 quantity=quantity,
                 price=price,
-                status=OrderStatus.NEW,
+                status=order_status,
                 filled_qty=Decimal(0),
                 avg_price=None,
                 time_in_force=time_in_force,
@@ -640,3 +713,37 @@ class HyperliquidClient(ExchangeService):
             
         except Exception:
             return Decimal(0)
+    
+    def _normalize_symbol(self, symbol: str) -> str:
+        """Normalize symbol format for Hyperliquid"""
+        if not self.info:
+            return symbol
+        
+        candidate = symbol.strip().upper()
+        
+        # Check if it's already a valid symbol
+        if candidate in self.info.name_to_coin:
+            return candidate
+        
+        # Try to convert from common formats
+        # Handle formats like "BASE/QUOTE" or "BASEUSDT"
+        if "/" in candidate:
+            # Format like "HYPE/USDC"
+            if candidate in self.info.name_to_coin:
+                return candidate
+        else:
+            # Format like "HYPEUSDC" or "HYPE"
+            for quote in ("USDC", "USDT", "USD"):
+                if candidate.endswith(quote) and len(candidate) > len(quote):
+                    base = candidate[:-len(quote)]
+                    pair = f"{base}/{quote}"
+                    if pair in self.info.name_to_coin:
+                        return pair
+            
+            # Try as direct symbol name
+            if candidate in self.info.name_to_coin:
+                return candidate
+        
+        # If we can't normalize, return original and let the API handle it
+        logger.warning(f"Could not normalize symbol {symbol}, using as-is")
+        return symbol

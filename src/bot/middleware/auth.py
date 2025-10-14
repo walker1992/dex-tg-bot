@@ -129,24 +129,23 @@ def require_permission(permission: str):
             
             user_id = update.effective_user.id
             
-            # Get auth middleware from context
-            auth_middleware = None
-            for handler in context.application.handlers[0]:
-                if isinstance(handler, AuthMiddleware):
-                    auth_middleware = handler
-                    break
+            # Get auth middleware from bot data
+            auth_middleware = context.bot_data.get('auth_middleware')
             
             if not auth_middleware:
-                await update.effective_message.reply_text("❌ Authentication system not available")
+                if update.effective_message:
+                    await update.effective_message.reply_text("❌ Authentication system not available")
                 return
             
             # Check permission
             if permission == "admin" and not auth_middleware.is_admin(user_id):
-                await update.effective_message.reply_text("❌ Admin permission required")
+                if update.effective_message:
+                    await update.effective_message.reply_text("❌ Admin permission required")
                 return
             
             if permission == "user" and not auth_middleware._is_user_allowed(user_id):
-                await update.effective_message.reply_text("❌ User permission required")
+                if update.effective_message:
+                    await update.effective_message.reply_text("❌ User permission required")
                 return
             
             # Permission granted, execute function

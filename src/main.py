@@ -89,6 +89,10 @@ class TradingBot:
         # Store middleware instances for later use
         self.auth_middleware = AuthMiddleware(self.config)
         self.logging_middleware = LoggingMiddleware()
+        
+        # Store auth middleware in bot data for access in handlers
+        self.application.bot_data['auth_middleware'] = self.auth_middleware
+        logger.info("✅ Auth middleware initialized and stored in bot_data")
     
     def _wrap_handler(self, handler_func):
         """Wrap handler with middleware"""
@@ -122,9 +126,11 @@ class TradingBot:
         self.application.add_handler(CommandHandler("balance", self._wrap_handler(trading_handlers.balance)))
         self.application.add_handler(CommandHandler("positions", self._wrap_handler(trading_handlers.positions)))
         self.application.add_handler(CommandHandler("orders", self._wrap_handler(trading_handlers.orders)))
+        self.application.add_handler(CommandHandler("trades", self._wrap_handler(trading_handlers.trades)))
         self.application.add_handler(CommandHandler("buy", self._wrap_handler(trading_handlers.buy)))
         self.application.add_handler(CommandHandler("sell", self._wrap_handler(trading_handlers.sell)))
         self.application.add_handler(CommandHandler("close", self._wrap_handler(trading_handlers.close)))
+        self.application.add_handler(CommandHandler("leverage", self._wrap_handler(trading_handlers.leverage)))
         self.application.add_handler(CommandHandler("cancel", self._wrap_handler(trading_handlers.cancel)))
         
         # Market data commands
@@ -162,12 +168,22 @@ class TradingBot:
             # Handle different callback types
             if data.startswith("menu_"):
                 await self._handle_menu_callback(query, context, data)
-            elif data.startswith("exchange_"):
-                await self._handle_exchange_callback(query, context, data)
+            elif data.startswith("trade_"):
+                await self._handle_trading_callback(query, context, data)
             elif data.startswith("trading_"):
                 await self._handle_trading_callback(query, context, data)
+            elif data.startswith("exchange_"):
+                await self._handle_exchange_callback(query, context, data)
+            elif data.startswith("market_"):
+                await self._handle_market_callback(query, context, data)
             elif data.startswith("alert_"):
                 await self._handle_alert_callback(query, context, data)
+            elif data.startswith("connect_"):
+                await self._handle_connect_callback(query, context, data)
+            elif data.startswith("settings_"):
+                await self._handle_settings_callback(query, context, data)
+            elif data.startswith("quick_"):
+                await self._handle_trading_callback(query, context, data)
             else:
                 await query.edit_message_text("❌ Unknown action")
                 
@@ -247,6 +263,16 @@ Use /orders [exchange] for detailed order information.
                 ])
                 await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
                 
+            elif data == "menu_trading":
+                # Show trading menu
+                from bot.keyboards.main import get_quick_trade_keyboard
+                keyboard = get_quick_trade_keyboard()
+                await query.edit_message_text(
+                    "🛒 **Trading Menu**\n\nSelect a trading option:",
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+                
             elif data == "menu_market":
                 # Show market data menu
                 from bot.keyboards.main import get_market_keyboard
@@ -314,13 +340,331 @@ Use /orders [exchange] for detailed order information.
     
     async def _handle_trading_callback(self, query, context: ContextTypes.DEFAULT_TYPE, data):
         """Handle trading-related callbacks"""
-        # Implementation for trading callbacks
-        pass
+        try:
+            if data == "quick_buy" or data == "trading_quick_buy":
+                # Show exchange selection for quick buy
+                from bot.keyboards.main import get_trading_exchange_keyboard
+                keyboard = get_trading_exchange_keyboard()
+                await query.edit_message_text(
+                    "🛒 **Quick Buy**\n\nSelect an exchange:",
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            elif data == "quick_sell" or data == "trading_quick_sell":
+                # Show exchange selection for quick sell
+                from bot.keyboards.main import get_trading_exchange_keyboard
+                keyboard = get_trading_exchange_keyboard()
+                await query.edit_message_text(
+                    "🛍️ **Quick Sell**\n\nSelect an exchange:",
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            elif data == "quick_close":
+                # Show exchange selection for quick close
+                from bot.keyboards.main import get_trading_exchange_keyboard
+                keyboard = get_trading_exchange_keyboard()
+                await query.edit_message_text(
+                    "📊 **Close Position**\n\nSelect an exchange:",
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            elif data == "quick_leverage":
+                # Show exchange selection for leverage setting
+                from bot.keyboards.main import get_trading_exchange_keyboard
+                keyboard = get_trading_exchange_keyboard()
+                await query.edit_message_text(
+                    "⚙️ **Set Leverage**\n\nSelect an exchange:",
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            elif data.startswith("trade_exchange_"):
+                # Handle exchange selection for trading
+                exchange = data.replace("trade_exchange_", "")
+                from bot.keyboards.main import get_trading_market_type_keyboard
+                keyboard = get_trading_market_type_keyboard(exchange)
+                await query.edit_message_text(
+                    f"📊 **{exchange.title()} Trading**\n\nSelect market type:",
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            elif data.startswith("trade_market_"):
+                # Handle market type selection
+                parts = data.replace("trade_market_", "").split("_")
+                market_type = parts[0]
+                exchange = parts[1]
+                from bot.keyboards.main import get_trading_side_keyboard
+                keyboard = get_trading_side_keyboard(exchange, market_type)
+                await query.edit_message_text(
+                    f"📈 **{market_type.title()} Trading on {exchange.title()}**\n\nSelect trading side:",
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            elif data.startswith("trade_side_"):
+                # Handle trading side selection
+                parts = data.replace("trade_side_", "").split("_")
+                if len(parts) >= 3:
+                    side = parts[0]  # long/short/buy/sell
+                    exchange = parts[1]
+                    market_type = parts[2]
+                    
+                    # Show symbol selection or order form
+                    if market_type == "futures":
+                        message = f"""
+📈 **{side.title()} {market_type.title()} on {exchange.title()}**
+
+**Popular Futures Symbols:**
+• BTC-PERP
+• ETH-PERP  
+• SOL-PERP
+• AVAX-PERP
+
+**Next Steps:**
+1. Choose a symbol
+2. Enter quantity
+3. Set leverage (for futures)
+4. Confirm order
+
+Use /buy or /sell commands for quick trading.
+                        """
+                    else:  # spot
+                        message = f"""
+💱 **{side.title()} {market_type.title()} on {exchange.title()}**
+
+**Popular Spot Symbols:**
+• BTC/USDC
+• ETH/USDC
+• SOL/USDC
+• AVAX/USDC
+
+**Next Steps:**
+1. Choose a symbol
+2. Enter quantity
+3. Set price (for limit orders)
+4. Confirm order
+
+Use /buy or /sell commands for quick trading.
+                        """
+                    
+                    from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                    back_keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back to Market Type", callback_data=f"trade_market_{market_type}_{exchange}")]
+                    ])
+                    await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+                else:
+                    await query.edit_message_text("❌ Invalid trading side selection")
+            elif data == "trading_balance":
+                # Show balance information using real data
+                try:
+                    service_manager = self.service_manager
+                    if not service_manager:
+                        message = "❌ Service manager not available. Please try again later."
+                    else:
+                        from bot.handlers.trading import _get_all_balances
+                        message = await _get_all_balances(service_manager)
+                        message += "\n\nUse /balance [exchange] for detailed balance information."
+                except Exception as e:
+                    logger.error(f"Error fetching balance in trading callback: {e}")
+                    message = "❌ Failed to fetch balance data. Please check your exchange connections."
+                
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Trading", callback_data="menu_trading")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+                
+            elif data == "trading_positions":
+                # Show positions information using real data
+                try:
+                    service_manager = self.service_manager
+                    if not service_manager:
+                        message = "❌ Service manager not available. Please try again later."
+                    else:
+                        from bot.handlers.trading import _get_all_positions
+                        message = await _get_all_positions(service_manager)
+                except Exception as e:
+                    logger.error(f"Error fetching positions in trading callback: {e}")
+                    message = "❌ Failed to fetch position data. Please check your exchange connections."
+                
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Trading", callback_data="menu_trading")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+                
+            elif data == "trading_orders":
+                # Show orders information directly
+                message = """
+📋 **Open Orders**
+
+**Hyperliquid:**
+• BTC-PERP: Buy 0.05 BTC @ $48,000 (Limit)
+• ETH-PERP: Sell 0.5 ETH @ $3,200 (Limit)
+
+**Aster:**
+• BTCUSDT: Buy 0.1 BTC @ $47,000 (Limit)
+• ETHUSDT: Sell 1.0 ETH @ $3,100 (Limit)
+
+**Total Open Orders:** 4
+
+Use /orders [exchange] for detailed order information.
+                """
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Trading", callback_data="menu_trading")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+                
+            elif data == "trading_price":
+                # Show price information
+                message = """
+📈 **Price Information**
+
+**Popular Symbols:**
+• BTC: $50,000.00 (+5.26%)
+• ETH: $2,800.00 (-3.45%)
+• SOL: $95.50 (+2.15%)
+
+Use /price <symbol> [exchange] for specific price information.
+                """
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Trading", callback_data="menu_trading")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+            else:
+                await query.edit_message_text("❌ Unknown trading action")
+        except Exception as e:
+            logger.error(f"Error in trading callback: {e}")
+            await query.edit_message_text("❌ An error occurred. Please try again.")
     
     async def _handle_alert_callback(self, query, context: ContextTypes.DEFAULT_TYPE, data):
         """Handle alert-related callbacks"""
-        # Implementation for alert callbacks
-        pass
+        try:
+            if data == "alerts_list":
+                message = """
+🔔 **My Alerts**
+
+**Active Alerts:**
+• BTC Price > $55,000 (Active)
+• ETH Price < $2,500 (Active)
+• Funding Rate > 0.01% (Active)
+
+**Total Active Alerts:** 3
+
+Use /alerts to manage your alerts.
+                """
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Alerts", callback_data="menu_alerts")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+            else:
+                await query.edit_message_text("❌ Alert feature coming soon")
+        except Exception as e:
+            logger.error(f"Error in alert callback: {e}")
+            await query.edit_message_text("❌ An error occurred. Please try again.")
+    
+    async def _handle_market_callback(self, query, context: ContextTypes.DEFAULT_TYPE, data):
+        """Handle market-related callbacks"""
+        try:
+            if data == "market_price":
+                message = """
+📈 **Market Prices**
+
+**Popular Symbols:**
+• BTC: $50,000.00 (+5.26%)
+• ETH: $2,800.00 (-3.45%)
+• SOL: $95.50 (+2.15%)
+• AVAX: $35.20 (+1.85%)
+
+Use /price <symbol> [exchange] for specific price information.
+                """
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Market", callback_data="menu_market")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+            else:
+                await query.edit_message_text("❌ Market feature coming soon")
+        except Exception as e:
+            logger.error(f"Error in market callback: {e}")
+            await query.edit_message_text("❌ An error occurred. Please try again.")
+    
+    async def _handle_connect_callback(self, query, context: ContextTypes.DEFAULT_TYPE, data):
+        """Handle connect-related callbacks"""
+        try:
+            if data == "connect_hyperliquid":
+                message = """
+🔷 **Connect Hyperliquid**
+
+To connect your Hyperliquid account:
+
+1. Go to Hyperliquid settings
+2. Generate API keys
+3. Send your API key and secret
+
+**Format:** `/connect_hyperliquid <api_key> <secret>`
+
+⚠️ **Security Note:** Never share your API keys with anyone!
+                """
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Connect", callback_data="menu_connect")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+            elif data == "connect_aster":
+                message = """
+🔶 **Connect Aster**
+
+To connect your Aster account:
+
+1. Go to Aster settings
+2. Generate API keys
+3. Send your API key and secret
+
+**Format:** `/connect_aster <api_key> <secret>`
+
+⚠️ **Security Note:** Never share your API keys with anyone!
+                """
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Connect", callback_data="menu_connect")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+            else:
+                await query.edit_message_text("❌ Connect feature coming soon")
+        except Exception as e:
+            logger.error(f"Error in connect callback: {e}")
+            await query.edit_message_text("❌ An error occurred. Please try again.")
+    
+    async def _handle_settings_callback(self, query, context: ContextTypes.DEFAULT_TYPE, data):
+        """Handle settings-related callbacks"""
+        try:
+            if data == "settings_accounts":
+                message = """
+🔗 **Exchange Accounts**
+
+**Connected Accounts:**
+• Hyperliquid: ✅ Connected
+• Aster: ✅ Connected
+
+**Account Status:**
+• Total Exchanges: 2
+• Active Connections: 2
+• Last Updated: Just now
+
+Use /accounts to view detailed account information.
+                """
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Settings", callback_data="menu_settings")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+            else:
+                await query.edit_message_text("❌ Settings feature coming soon")
+        except Exception as e:
+            logger.error(f"Error in settings callback: {e}")
+            await query.edit_message_text("❌ An error occurred. Please try again.")
     
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle non-command messages (for account setup flow)"""

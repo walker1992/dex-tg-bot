@@ -31,9 +31,9 @@ class OrderStatus(Enum):
 
 
 class TimeInForce(Enum):
-    GTC = "GTC"  # Good Till Canceled
-    IOC = "IOC"  # Immediate or Cancel
-    FOK = "FOK"  # Fill or Kill
+    GTC = "Gtc"  # Good Till Canceled (Hyperliquid format)
+    IOC = "Ioc"  # Immediate or Cancel (Hyperliquid format)
+    FOK = "Fok"  # Fill or Kill (Hyperliquid format)
 
 
 @dataclass

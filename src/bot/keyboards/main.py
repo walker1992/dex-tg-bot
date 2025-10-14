@@ -16,11 +16,14 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📈 Market Data", callback_data="menu_market")
         ],
         [
-            InlineKeyboardButton("🔔 Alerts", callback_data="menu_alerts"),
-            InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")
+            InlineKeyboardButton("🛒 Trading", callback_data="menu_trading"),
+            InlineKeyboardButton("🔔 Alerts", callback_data="menu_alerts")
         ],
         [
-            InlineKeyboardButton("🔗 Connect Exchange", callback_data="menu_connect"),
+            InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
+            InlineKeyboardButton("🔗 Connect Exchange", callback_data="menu_connect")
+        ],
+        [
             InlineKeyboardButton("❓ Help", callback_data="menu_help")
         ]
     ]
@@ -294,3 +297,113 @@ def get_trading_quick_keyboard() -> ReplyKeyboardMarkup:
         ]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+
+def get_trading_exchange_keyboard() -> InlineKeyboardMarkup:
+    """Get trading exchange selection keyboard"""
+    keyboard = [
+        [
+            InlineKeyboardButton("🔷 Hyperliquid", callback_data="trade_exchange_hyperliquid"),
+            InlineKeyboardButton("🔶 Aster", callback_data="trade_exchange_aster")
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Trading", callback_data="menu_trading")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_trading_market_type_keyboard(exchange: str) -> InlineKeyboardMarkup:
+    """Get trading market type selection keyboard"""
+    keyboard = [
+        [
+            InlineKeyboardButton("💱 Spot Trading", callback_data=f"trade_market_spot_{exchange}"),
+            InlineKeyboardButton("📈 Futures Trading", callback_data=f"trade_market_futures_{exchange}")
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Exchange", callback_data="trade_exchange_select")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_trading_side_keyboard(exchange: str, market_type: str) -> InlineKeyboardMarkup:
+    """Get trading side selection keyboard"""
+    if market_type == "futures":
+        keyboard = [
+            [
+                InlineKeyboardButton("🟢 Long (Buy)", callback_data=f"trade_side_long_{exchange}_{market_type}"),
+                InlineKeyboardButton("🔴 Short (Sell)", callback_data=f"trade_side_short_{exchange}_{market_type}")
+            ],
+            [
+                InlineKeyboardButton("🔙 Back to Market Type", callback_data=f"trade_exchange_{exchange}")
+            ]
+        ]
+    else:  # spot
+        keyboard = [
+            [
+                InlineKeyboardButton("🛒 Buy", callback_data=f"trade_side_buy_{exchange}_{market_type}"),
+                InlineKeyboardButton("🛍️ Sell", callback_data=f"trade_side_sell_{exchange}_{market_type}")
+            ],
+            [
+                InlineKeyboardButton("🔙 Back to Market Type", callback_data=f"trade_exchange_{exchange}")
+            ]
+        ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_leverage_keyboard(exchange: str, symbol: str) -> InlineKeyboardMarkup:
+    """Get leverage selection keyboard"""
+    keyboard = [
+        [
+            InlineKeyboardButton("1x", callback_data=f"leverage_1_{exchange}_{symbol}"),
+            InlineKeyboardButton("2x", callback_data=f"leverage_2_{exchange}_{symbol}"),
+            InlineKeyboardButton("3x", callback_data=f"leverage_3_{exchange}_{symbol}")
+        ],
+        [
+            InlineKeyboardButton("5x", callback_data=f"leverage_5_{exchange}_{symbol}"),
+            InlineKeyboardButton("10x", callback_data=f"leverage_10_{exchange}_{symbol}"),
+            InlineKeyboardButton("20x", callback_data=f"leverage_20_{exchange}_{symbol}")
+        ],
+        [
+            InlineKeyboardButton("50x", callback_data=f"leverage_50_{exchange}_{symbol}"),
+            InlineKeyboardButton("100x", callback_data=f"leverage_100_{exchange}_{symbol}"),
+            InlineKeyboardButton("Custom", callback_data=f"leverage_custom_{exchange}_{symbol}")
+        ],
+        [
+            InlineKeyboardButton("🔙 Back", callback_data=f"trade_symbol_{exchange}")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_order_type_keyboard(exchange: str, market_type: str, side: str) -> InlineKeyboardMarkup:
+    """Get order type selection keyboard"""
+    keyboard = [
+        [
+            InlineKeyboardButton("📈 Market Order", callback_data=f"order_type_market_{exchange}_{market_type}_{side}"),
+            InlineKeyboardButton("📊 Limit Order", callback_data=f"order_type_limit_{exchange}_{market_type}_{side}")
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Side", callback_data=f"trade_market_{market_type}_{exchange}")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_quick_trade_keyboard() -> InlineKeyboardMarkup:
+    """Get quick trade keyboard"""
+    keyboard = [
+        [
+            InlineKeyboardButton("🛒 Quick Buy", callback_data="quick_buy"),
+            InlineKeyboardButton("🛍️ Quick Sell", callback_data="quick_sell")
+        ],
+        [
+            InlineKeyboardButton("📊 Close Position", callback_data="quick_close"),
+            InlineKeyboardButton("⚙️ Set Leverage", callback_data="quick_leverage")
+        ],
+        [
+            InlineKeyboardButton("🔙 Back to Main", callback_data="menu_main")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)

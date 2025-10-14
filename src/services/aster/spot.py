@@ -277,13 +277,21 @@ class AsterSpotService(SpotService):
     ) -> Order:
         """Place spot order"""
         try:
+            # Handle both enum and string inputs
+            side_str = side.value if hasattr(side, 'value') else str(side).upper()
+            order_type_str = order_type.value if hasattr(order_type, 'value') else str(order_type).upper()
+            
             params = {
                 "symbol": symbol,
-                "side": side.value,
-                "type": order_type.value,
-                "quantity": str(quantity),
-                "timeInForce": time_in_force.value
+                "side": side_str,
+                "type": order_type_str,
+                "quantity": str(quantity)
             }
+            
+            # Only add timeInForce for limit orders
+            if order_type_str == "LIMIT":
+                time_in_force_str = time_in_force.value if hasattr(time_in_force, 'value') else str(time_in_force)
+                params["timeInForce"] = time_in_force_str
             
             if price:
                 params["price"] = str(price)
@@ -296,6 +304,8 @@ class AsterSpotService(SpotService):
             # Create order object from response
             order_id = str(data.get("orderId", 0))
             
+            from ..base import OrderStatus
+            
             return Order(
                 order_id=order_id,
                 symbol=symbol,
@@ -303,7 +313,7 @@ class AsterSpotService(SpotService):
                 order_type=order_type,
                 quantity=quantity,
                 price=price,
-                status="NEW",
+                status=OrderStatus.NEW,
                 filled_qty=Decimal(0),
                 avg_price=None,
                 time_in_force=time_in_force,

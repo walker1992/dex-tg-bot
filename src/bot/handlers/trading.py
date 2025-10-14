@@ -32,7 +32,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Get service manager from context
         service_manager = context.bot_data.get('service_manager')
         if not service_manager:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ Service manager not available. Please try again later."
             )
             return
@@ -176,22 +176,73 @@ async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # TODO: Implement actual orders fetching
-        # For now, show mock data
+        # Get service manager from context
+        service_manager = context.bot_data.get('service_manager')
+        if not service_manager:
+            await update.message.reply_text(
+                "❌ Service manager not available. Please try again later."
+            )
+            return
         
-        message = """
-📋 **Open Orders**
-
-**Hyperliquid:**
-• BTC-PERP: Buy 0.05 BTC @ $48,000 (Limit)
-• ETH-PERP: Sell 0.5 ETH @ $3,200 (Limit)
-
-**Aster:**
-• BTCUSDT: Buy 0.1 BTC @ $47,000 (Limit)
-• ETHUSDT: Sell 1.0 ETH @ $3,100 (Limit)
-
-**Total Open Orders:** 4
-        """
+        # Fetch orders from exchanges
+        all_orders = []
+        exchanges_to_check = [exchange] if exchange else ['hyperliquid', 'aster']
+        
+        for ex in exchanges_to_check:
+            try:
+                # Check spot orders
+                spot_service = service_manager.get_spot_service(ex)
+                if spot_service and service_manager.is_service_connected(ex, "spot"):
+                    spot_orders = await spot_service.get_open_orders()
+                    for order in spot_orders:
+                        order_info = {
+                            'order': order,
+                            'exchange': ex,
+                            'market_type': 'Spot'
+                        }
+                        all_orders.append(order_info)
+                
+                # Check futures orders
+                futures_service = service_manager.get_futures_service(ex)
+                if futures_service and service_manager.is_service_connected(ex, "futures"):
+                    futures_orders = await futures_service.get_open_orders()
+                    for order in futures_orders:
+                        order_info = {
+                            'order': order,
+                            'exchange': ex,
+                            'market_type': 'Futures'
+                        }
+                        all_orders.append(order_info)
+                        
+            except Exception as e:
+                logger.error(f"Error fetching orders from {ex}: {e}")
+                continue
+        
+        # Format orders message
+        if not all_orders:
+            message = "📋 **Open Orders**\n\nNo open orders found."
+        else:
+            message = f"📋 **Open Orders** ({len(all_orders)} total)\n\n"
+            
+            # Group orders by exchange
+            orders_by_exchange = {}
+            for order_info in all_orders:
+                ex = order_info['exchange'].title()
+                if ex not in orders_by_exchange:
+                    orders_by_exchange[ex] = []
+                orders_by_exchange[ex].append(order_info)
+            
+            for ex, order_infos in orders_by_exchange.items():
+                message += f"**{ex}:**\n"
+                for order_info in order_infos:
+                    order = order_info['order']
+                    side_emoji = "🟢" if order.side.value == "BUY" else "🔴"
+                    price_text = f"${order.price:,.4f}" if order.price else "Market"
+                    market_type = order_info['market_type']
+                    
+                    message += f"• {side_emoji} {order.symbol} ({market_type}): {order.side.value} {order.quantity} @ {price_text}\n"
+                    message += f"  Order ID: {order.order_id} | Status: {order.status.value}\n"
+                message += "\n"
         
         await update.message.reply_text(message, parse_mode='Markdown')
         
@@ -212,10 +263,15 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not user:
             return
         
+        # Get the message object (handle both regular messages and edited messages)
+        message = update.message or update.edited_message
+        if not message:
+            return
+        
         # Parse command arguments
         args = context.args
         if len(args) < 2:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ Invalid command format.\n"
                 "Usage: /buy <symbol> <quantity> [price] [exchange]\n"
                 "Example: /buy BTC 0.1 50000 hyperliquid"
@@ -227,6 +283,9 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = float(args[2]) if len(args) > 2 and args[2] != 'market' else None
         exchange = args[3].lower() if len(args) > 3 else 'hyperliquid'
         
+        # Define price_text for logging
+        price_text = "Market Price" if price is None else f"${price:,.2f}"
+        
         if exchange not in ['hyperliquid', 'aster']:
             await update.message.reply_text(
                 "❌ Invalid exchange. Available exchanges: hyperliquid, aster"
@@ -235,20 +294,53 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Validate inputs
         if quantity <= 0:
-            await update.message.reply_text("❌ Quantity must be positive")
+            await message.reply_text("❌ Quantity must be positive")
             return
         
         if price is not None and price <= 0:
-            await update.message.reply_text("❌ Price must be positive")
+            await message.reply_text("❌ Price must be positive")
             return
         
-        # TODO: Implement actual order placement
-        # For now, show confirmation
+        # Get service manager from context
+        service_manager = context.bot_data.get('service_manager')
+        if not service_manager:
+            await message.reply_text(
+                "❌ Service manager not available. Please try again later."
+            )
+            return
         
-        order_type = "Market" if price is None else "Limit"
-        price_text = "Market Price" if price is None else f"${price:,.2f}"
+        # Show loading message
+        loading_msg = await message.reply_text("🔄 Placing buy order...")
         
-        message = f"""
+        try:
+            # Place the actual order
+            order_result = await _place_buy_order(service_manager, exchange, symbol, quantity, price)
+            
+            if order_result['success']:
+                order_type = "Market" if price is None else "Limit"
+                price_text = "Market Price" if price is None else f"${price:,.2f}"
+                
+                # Log trade to CSV
+                try:
+                    from bot.storage.csv_storage import CSVStorage, Trade
+                    storage = CSVStorage()
+                    trade = Trade(
+                        user_id=user.id,
+                        exchange=exchange,
+                        symbol=symbol,
+                        side="BUY",
+                        order_type=order_type,
+                        quantity=quantity,
+                        price=price,
+                        status=order_result.get('status', 'NEW'),
+                        order_id=order_result.get('order_id', 'N/A')
+                    )
+                    storage.create_trade(trade)
+                    logger.info(f"Trade logged to CSV: {trade.side} {trade.quantity} {trade.symbol} on {trade.exchange}")
+                except Exception as e:
+                    logger.error(f"Failed to log trade to CSV: {e}")
+                
+                message = f"""
 ✅ **Buy Order Placed**
 
 **Exchange:** {exchange.title()}
@@ -258,25 +350,41 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Quantity:** {quantity}
 **Price:** {price_text}
 
-**Order ID:** #12345
-**Status:** Pending
+**Order ID:** {order_result.get('order_id', 'N/A')}
+**Status:** {order_result.get('status', 'Pending')}
 
 Use /orders to view all open orders.
-        """
-        
-        await update.message.reply_text(message, parse_mode='Markdown')
+                """
+            else:
+                message = f"❌ **Order Failed**\n\n{order_result.get('error', 'Unknown error occurred')}"
+            
+            try:
+                await loading_msg.edit_text(message, parse_mode='Markdown')
+            except Exception as parse_error:
+                logger.warning(f"Markdown parse error: {parse_error}, sending as plain text")
+                await loading_msg.edit_text(message)
+            
+        except Exception as e:
+            logger.error(f"Error placing buy order: {e}")
+            await loading_msg.edit_text(
+                "❌ Failed to place buy order. Please check your inputs and try again."
+            )
         
         logger.info(f"Buy order placed by user {user.id} (@{user.username}): {symbol} {quantity} @ {price_text} on {exchange}")
         
     except ValueError:
-        await update.message.reply_text(
-            "❌ Invalid number format. Please check your quantity and price values."
-        )
+        message = update.message or update.edited_message
+        if message:
+            await message.reply_text(
+                "❌ Invalid number format. Please check your quantity and price values."
+            )
     except Exception as e:
         logger.error(f"Error in buy handler: {e}")
-        await update.message.reply_text(
-            "❌ An error occurred. Please try again later."
-        )
+        message = update.message or update.edited_message
+        if message:
+            await message.reply_text(
+                "❌ An error occurred. Please try again later."
+            )
 
 
 @require_user
@@ -287,10 +395,15 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not user:
             return
         
+        # Get the message object (handle both regular messages and edited messages)
+        message = update.message or update.edited_message
+        if not message:
+            return
+        
         # Parse command arguments
         args = context.args
         if len(args) < 2:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ Invalid command format.\n"
                 "Usage: /sell <symbol> <quantity> [price] [exchange]\n"
                 "Example: /sell BTC 0.1 50000 hyperliquid"
@@ -302,6 +415,9 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = float(args[2]) if len(args) > 2 and args[2] != 'market' else None
         exchange = args[3].lower() if len(args) > 3 else 'hyperliquid'
         
+        # Define price_text for logging
+        price_text = "Market Price" if price is None else f"${price:,.2f}"
+        
         if exchange not in ['hyperliquid', 'aster']:
             await update.message.reply_text(
                 "❌ Invalid exchange. Available exchanges: hyperliquid, aster"
@@ -310,20 +426,53 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Validate inputs
         if quantity <= 0:
-            await update.message.reply_text("❌ Quantity must be positive")
+            await message.reply_text("❌ Quantity must be positive")
             return
         
         if price is not None and price <= 0:
-            await update.message.reply_text("❌ Price must be positive")
+            await message.reply_text("❌ Price must be positive")
             return
         
-        # TODO: Implement actual order placement
-        # For now, show confirmation
+        # Get service manager from context
+        service_manager = context.bot_data.get('service_manager')
+        if not service_manager:
+            await message.reply_text(
+                "❌ Service manager not available. Please try again later."
+            )
+            return
         
-        order_type = "Market" if price is None else "Limit"
-        price_text = "Market Price" if price is None else f"${price:,.2f}"
+        # Show loading message
+        loading_msg = await message.reply_text("🔄 Placing sell order...")
         
-        message = f"""
+        try:
+            # Place the actual order
+            order_result = await _place_sell_order(service_manager, exchange, symbol, quantity, price)
+            
+            if order_result['success']:
+                order_type = "Market" if price is None else "Limit"
+                price_text = "Market Price" if price is None else f"${price:,.2f}"
+                
+                # Log trade to CSV
+                try:
+                    from bot.storage.csv_storage import CSVStorage, Trade
+                    storage = CSVStorage()
+                    trade = Trade(
+                        user_id=user.id,
+                        exchange=exchange,
+                        symbol=symbol,
+                        side="SELL",
+                        order_type=order_type,
+                        quantity=quantity,
+                        price=price,
+                        status=order_result.get('status', 'NEW'),
+                        order_id=order_result.get('order_id', 'N/A')
+                    )
+                    storage.create_trade(trade)
+                    logger.info(f"Trade logged to CSV: {trade.side} {trade.quantity} {trade.symbol} on {trade.exchange}")
+                except Exception as e:
+                    logger.error(f"Failed to log trade to CSV: {e}")
+                
+                message = f"""
 ✅ **Sell Order Placed**
 
 **Exchange:** {exchange.title()}
@@ -333,25 +482,41 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Quantity:** {quantity}
 **Price:** {price_text}
 
-**Order ID:** #12346
-**Status:** Pending
+**Order ID:** {order_result.get('order_id', 'N/A')}
+**Status:** {order_result.get('status', 'Pending')}
 
 Use /orders to view all open orders.
-        """
-        
-        await update.message.reply_text(message, parse_mode='Markdown')
+                """
+            else:
+                message = f"❌ **Order Failed**\n\n{order_result.get('error', 'Unknown error occurred')}"
+            
+            try:
+                await loading_msg.edit_text(message, parse_mode='Markdown')
+            except Exception as parse_error:
+                logger.warning(f"Markdown parse error: {parse_error}, sending as plain text")
+                await loading_msg.edit_text(message)
+            
+        except Exception as e:
+            logger.error(f"Error placing sell order: {e}")
+            await loading_msg.edit_text(
+                "❌ Failed to place sell order. Please check your inputs and try again."
+            )
         
         logger.info(f"Sell order placed by user {user.id} (@{user.username}): {symbol} {quantity} @ {price_text} on {exchange}")
         
     except ValueError:
-        await update.message.reply_text(
-            "❌ Invalid number format. Please check your quantity and price values."
-        )
+        message = update.message or update.edited_message
+        if message:
+            await message.reply_text(
+                "❌ Invalid number format. Please check your quantity and price values."
+            )
     except Exception as e:
         logger.error(f"Error in sell handler: {e}")
-        await update.message.reply_text(
-            "❌ An error occurred. Please try again later."
-        )
+        message = update.message or update.edited_message
+        if message:
+            await message.reply_text(
+                "❌ An error occurred. Please try again later."
+            )
 
 
 @require_user
@@ -381,30 +546,134 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # TODO: Implement actual position closing
-        # For now, show confirmation
+        # Get service manager from context
+        service_manager = context.bot_data.get('service_manager')
+        if not service_manager:
+            await message.reply_text(
+                "❌ Service manager not available. Please try again later."
+            )
+            return
         
-        message = f"""
+        # Show loading message
+        loading_msg = await update.message.reply_text("🔄 Closing position...")
+        
+        try:
+            # Close the actual position
+            close_result = await _close_position(service_manager, exchange, symbol)
+            
+            if close_result['success']:
+                message = f"""
 ✅ **Position Closed**
 
 **Exchange:** {exchange.title()}
 **Symbol:** {symbol}
 **Action:** Close Position
-**Quantity:** 0.1 {symbol}
-**Price:** Market Price
+**Quantity:** {close_result.get('quantity', 'N/A')} {symbol}
+**Price:** {close_result.get('price', 'Market Price')}
+**Position Side:** {close_result.get('position_side', 'N/A')}
 
-**Order ID:** #12347
-**Status:** Filled
+**Order ID:** {close_result.get('order_id', 'N/A')}
+**Status:** {close_result.get('status', 'Filled')}
 
 Use /positions to view remaining positions.
-        """
-        
-        await update.message.reply_text(message, parse_mode='Markdown')
+                """
+            else:
+                message = f"❌ **Close Failed**\n\n{close_result.get('error', 'Unknown error occurred')}"
+            
+            await loading_msg.edit_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            await loading_msg.edit_text(
+                "❌ Failed to close position. Please check your inputs and try again."
+            )
         
         logger.info(f"Position closed by user {user.id} (@{user.username}): {symbol} on {exchange}")
         
     except Exception as e:
         logger.error(f"Error in close handler: {e}")
+        await update.message.reply_text(
+            "❌ An error occurred. Please try again later."
+        )
+
+
+@require_user
+async def leverage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /leverage command"""
+    try:
+        user = update.effective_user
+        if not user:
+            return
+        
+        # Parse command arguments
+        args = context.args
+        if len(args) < 2:
+            await update.message.reply_text(
+                "❌ Invalid command format.\n"
+                "Usage: /leverage <symbol> <leverage> [exchange]\n"
+                "Example: /leverage BTC 10 hyperliquid"
+            )
+            return
+        
+        symbol = args[0].upper()
+        leverage_value = int(args[1])
+        exchange = args[2].lower() if len(args) > 2 else 'hyperliquid'
+        
+        if exchange not in ['hyperliquid', 'aster']:
+            await update.message.reply_text(
+                "❌ Invalid exchange. Available exchanges: hyperliquid, aster"
+            )
+            return
+        
+        # Validate leverage
+        if leverage_value < 1 or leverage_value > 100:
+            await update.message.reply_text("❌ Leverage must be between 1 and 100")
+            return
+        
+        # Get service manager from context
+        service_manager = context.bot_data.get('service_manager')
+        if not service_manager:
+            await message.reply_text(
+                "❌ Service manager not available. Please try again later."
+            )
+            return
+        
+        # Show loading message
+        loading_msg = await update.message.reply_text("🔄 Setting leverage...")
+        
+        try:
+            # Set the leverage
+            leverage_result = await _set_leverage(service_manager, exchange, symbol, leverage_value)
+            
+            if leverage_result['success']:
+                message = f"""
+✅ **Leverage Set**
+
+**Exchange:** {exchange.title()}
+**Symbol:** {symbol}
+**Leverage:** {leverage_value}x
+
+Leverage has been successfully set for {symbol} on {exchange.title()}.
+                """
+            else:
+                message = f"❌ **Leverage Setting Failed**\n\n{leverage_result.get('error', 'Unknown error occurred')}"
+            
+            await loading_msg.edit_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error setting leverage: {e}")
+            await loading_msg.edit_text(
+                "❌ Failed to set leverage. Please check your inputs and try again."
+            )
+        
+        logger.info(f"Leverage set by user {user.id} (@{user.username}): {symbol} {leverage_value}x on {exchange}")
+        
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid leverage value. Please enter a number between 1 and 100."
+        )
+    except Exception as e:
+        logger.error(f"Error in leverage handler: {e}")
         await update.message.reply_text(
             "❌ An error occurred. Please try again later."
         )
@@ -641,6 +910,61 @@ async def funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         logger.error(f"Error in funding handler: {e}")
+        await update.message.reply_text(
+            "❌ An error occurred. Please try again later."
+        )
+
+
+@require_user
+async def trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /trades command to show user's trade history"""
+    try:
+        user = update.effective_user
+        if not user:
+            return
+        
+        # Parse command arguments
+        args = context.args
+        limit = int(args[0]) if args and args[0].isdigit() else 10
+        
+        if limit > 100:
+            limit = 100
+        
+        try:
+            from bot.storage.csv_storage import CSVStorage
+            storage = CSVStorage()
+            user_trades = storage.get_user_trades(user.id, limit)
+            
+            if not user_trades:
+                message = "📊 **Your Trade History**\n\nNo trades found."
+            else:
+                message = f"📊 **Your Trade History** (Last {len(user_trades)} trades)\n\n"
+                
+                for trade in user_trades:
+                    side_emoji = "🟢" if trade.side == "BUY" else "🔴"
+                    price_text = f"${trade.price:,.4f}" if trade.price else "Market"
+                    status_emoji = "✅" if trade.status == "FILLED" else "⏳" if trade.status == "NEW" else "❌"
+                    
+                    message += f"{side_emoji} **{trade.side}** {trade.quantity} {trade.symbol}\n"
+                    message += f"   Exchange: {trade.exchange.title()}\n"
+                    message += f"   Type: {trade.order_type}\n"
+                    message += f"   Price: {price_text}\n"
+                    message += f"   Status: {status_emoji} {trade.status}\n"
+                    message += f"   Order ID: {trade.order_id}\n"
+                    message += f"   Time: {trade.created_at[:19]}\n\n"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error fetching trade history: {e}")
+            await update.message.reply_text(
+                "❌ Failed to fetch trade history. Please try again later."
+            )
+        
+        logger.info(f"Trade history command executed by user {user.id} (@{user.username})")
+        
+    except Exception as e:
+        logger.error(f"Error in trades handler: {e}")
         await update.message.reply_text(
             "❌ An error occurred. Please try again later."
         )
@@ -1249,3 +1573,215 @@ def _extract_position_lines_from_message(message: str) -> str:
         return '\n'.join(position_lines) if position_lines else "• No positions"
     except Exception:
         return "• No positions"
+
+
+# Trading Functions
+
+async def _place_buy_order(service_manager, exchange: str, symbol: str, quantity: float, price: float = None) -> dict:
+    """Place a buy order"""
+    try:
+        from services.base import OrderSide, OrderType, TimeInForce
+        from decimal import Decimal
+        
+        # Determine if this is spot or futures trading
+        is_futures = _is_futures_symbol(symbol)
+        
+        if is_futures:
+            service = service_manager.get_futures_service(exchange)
+            if not service or not service_manager.is_service_connected(exchange, "futures"):
+                return {"success": False, "error": f"{exchange.title()} futures service not connected"}
+        else:
+            service = service_manager.get_spot_service(exchange)
+            if not service or not service_manager.is_service_connected(exchange, "spot"):
+                return {"success": False, "error": f"{exchange.title()} spot service not connected"}
+        
+        # Prepare order parameters
+        order_side = OrderSide.BUY
+        order_type = OrderType.MARKET if price is None else OrderType.LIMIT
+        time_in_force = TimeInForce.GTC
+        
+        # Place the order
+        if is_futures:
+            order = await service.place_futures_order(
+                symbol=symbol,
+                side=order_side,
+                order_type=order_type,
+                quantity=Decimal(str(quantity)),
+                price=Decimal(str(price)) if price else None,
+                time_in_force=time_in_force
+            )
+        else:
+            order = await service.place_spot_order(
+                symbol=symbol,
+                side=order_side,
+                order_type=order_type,
+                quantity=Decimal(str(quantity)),
+                price=Decimal(str(price)) if price else None,
+                time_in_force=time_in_force
+            )
+        
+        return {
+            "success": True,
+            "order_id": order.order_id,
+            "status": order.status.value,
+            "symbol": symbol,
+            "side": order_side.value,
+            "quantity": str(quantity),
+            "price": str(price) if price else "Market"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error placing buy order: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def _place_sell_order(service_manager, exchange: str, symbol: str, quantity: float, price: float = None) -> dict:
+    """Place a sell order"""
+    try:
+        from services.base import OrderSide, OrderType, TimeInForce
+        from decimal import Decimal
+        
+        # Determine if this is spot or futures trading
+        is_futures = _is_futures_symbol(symbol)
+        
+        if is_futures:
+            service = service_manager.get_futures_service(exchange)
+            if not service or not service_manager.is_service_connected(exchange, "futures"):
+                return {"success": False, "error": f"{exchange.title()} futures service not connected"}
+        else:
+            service = service_manager.get_spot_service(exchange)
+            if not service or not service_manager.is_service_connected(exchange, "spot"):
+                return {"success": False, "error": f"{exchange.title()} spot service not connected"}
+        
+        # Prepare order parameters
+        order_side = OrderSide.SELL
+        order_type = OrderType.MARKET if price is None else OrderType.LIMIT
+        time_in_force = TimeInForce.GTC
+        
+        # Place the order
+        if is_futures:
+            order = await service.place_futures_order(
+                symbol=symbol,
+                side=order_side,
+                order_type=order_type,
+                quantity=Decimal(str(quantity)),
+                price=Decimal(str(price)) if price else None,
+                time_in_force=time_in_force
+            )
+        else:
+            order = await service.place_spot_order(
+                symbol=symbol,
+                side=order_side,
+                order_type=order_type,
+                quantity=Decimal(str(quantity)),
+                price=Decimal(str(price)) if price else None,
+                time_in_force=time_in_force
+            )
+        
+        return {
+            "success": True,
+            "order_id": order.order_id,
+            "status": order.status.value,
+            "symbol": symbol,
+            "side": order_side.value,
+            "quantity": str(quantity),
+            "price": str(price) if price else "Market"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error placing sell order: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def _close_position(service_manager, exchange: str, symbol: str) -> dict:
+    """Close a position"""
+    try:
+        from services.base import OrderSide, OrderType, TimeInForce
+        from decimal import Decimal
+        
+        # Get futures service (positions are only in futures)
+        service = service_manager.get_futures_service(exchange)
+        if not service or not service_manager.is_service_connected(exchange, "futures"):
+            return {"success": False, "error": f"{exchange.title()} futures service not connected"}
+        
+        # Get current positions to find the position to close
+        positions = await service.get_futures_positions()
+        target_position = None
+        
+        for position in positions:
+            if position.symbol.upper() == symbol.upper() and position.size > 0:
+                target_position = position
+                break
+        
+        if not target_position:
+            return {"success": False, "error": f"No open position found for {symbol}"}
+        
+        # Determine the opposite side to close the position
+        close_side = OrderSide.SELL if target_position.side.upper() == "LONG" else OrderSide.BUY
+        
+        # Place a market order to close the position
+        order = await service.place_futures_order(
+            symbol=symbol,
+            side=close_side,
+            order_type=OrderType.MARKET,
+            quantity=target_position.size,
+            time_in_force=TimeInForce.IOC,  # Immediate or Cancel for closing
+            reduce_only=True  # This is a reduce-only order
+        )
+        
+        return {
+            "success": True,
+            "order_id": order.order_id,
+            "status": order.status.value,
+            "symbol": symbol,
+            "side": close_side.value,
+            "quantity": str(target_position.size),
+            "price": "Market",
+            "position_side": target_position.side
+        }
+        
+    except Exception as e:
+        logger.error(f"Error closing position: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _is_futures_symbol(symbol: str) -> bool:
+    """Determine if a symbol is for futures trading"""
+    # Common futures indicators
+    futures_indicators = ['-PERP', '-PERPETUAL', 'PERP', 'FUTURES', 'FUT']
+    
+    symbol_upper = symbol.upper()
+    for indicator in futures_indicators:
+        if indicator in symbol_upper:
+            return True
+    
+    # For Hyperliquid, most symbols are futures by default
+    # For Aster, check if it ends with USDT (common futures format)
+    if symbol_upper.endswith('USDT') and not symbol_upper.endswith('USDT0'):
+        return True
+    
+    return False
+
+
+async def _set_leverage(service_manager, exchange: str, symbol: str, leverage: int) -> dict:
+    """Set leverage for a futures position"""
+    try:
+        service = service_manager.get_futures_service(exchange)
+        if not service or not service_manager.is_service_connected(exchange, "futures"):
+            return {"success": False, "error": f"{exchange.title()} futures service not connected"}
+        
+        # Set leverage
+        success = await service.set_leverage(symbol, leverage)
+        
+        if success:
+            return {
+                "success": True,
+                "symbol": symbol,
+                "leverage": leverage
+            }
+        else:
+            return {"success": False, "error": "Failed to set leverage"}
+        
+    except Exception as e:
+        logger.error(f"Error setting leverage: {e}")
+        return {"success": False, "error": str(e)}

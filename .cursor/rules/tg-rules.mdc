@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+1，python环境使用lightpool：conda activate lightpool
