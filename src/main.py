@@ -32,6 +32,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Reduce noisy library loggers (suppress HTTP Request: POST logs)
+for noisy_logger in [
+    'telegram',
+    'telegram.ext',
+    'telegram.request',
+    'telegram.vendor.ptb_urllib3.urllib3',
+    'httpx',
+    'urllib3'
+]:
+    try:
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+    except Exception:
+        pass
+
 
 class TradingBot:
     """Main Trading Bot Class"""
@@ -260,14 +274,33 @@ class TradingBot:
                 await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
                 
             elif data == "menu_trading":
-                # Show trading menu
-                from bot.keyboards.main import get_quick_trade_keyboard
-                keyboard = get_quick_trade_keyboard()
-                await query.edit_message_text(
-                    "🛒 **Trading Menu**\n\nSelect a trading option:",
-                    parse_mode='Markdown',
-                    reply_markup=keyboard
+                # Show quick trading instructions to use /buy and /sell directly
+                message = (
+                    "🛒 **Quick Trading**\n\n"
+                    "Use commands to place orders directly without navigating menus.\n\n"
+                    "**/buy Usage**\n"
+                    "`/buy <symbol> <quantity> [price] [exchange] [spot]`\n"
+                    "- Default exchange: hyperliquid\n"
+                    "- Default market: futures (omit 'spot' for futures)\n"
+                    "- Omit price or use 'market' for market order\n"
+                    "Examples:\n"
+                    "• `/buy BTC 0.1 50000 hyperliquid` (futures limit)\n"
+                    "• `/buy BTC 0.1 market hyperliquid` (futures market)\n"
+                    "• `/buy HYPE/USDC 0.1 hyperliquid spot` (spot market)\n"
+                    "• `/buy HYPE/USDC 0.1 40 hyperliquid` (spot market)\n\n"
+                    "**/sell Usage**\n"
+                    "`/sell <symbol> <quantity> [price] [exchange] [spot]`\n"
+                    "Examples:\n"
+                    "• `/sell ASTERUSDT 1.0 2.0 aster spot` (spot limit)\n"
+                    "• `/sell ASTERUSDT 1.0 market aster spot` (spot market)\n"
+                    "• `/sell ASTERUSDT 10.0 2.0 hyperliquid` (futures limit)\n"
+                    "• `/sell ASTERUSDT 10.0 market hyperliquid` (futures market)\n"
                 )
+                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+                back_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Main", callback_data="menu_main")]
+                ])
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
                 
             elif data == "menu_market":
                 # Show market data menu
@@ -563,23 +596,88 @@ Use /alerts to manage your alerts.
     async def _handle_market_callback(self, query, context: ContextTypes.DEFAULT_TYPE, data):
         """Handle market-related callbacks"""
         try:
+            service_manager = self.service_manager
+            from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
+            back_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back to Market", callback_data="menu_market")]
+            ])
+
+            async def aster_symbol(base: str) -> str:
+                return f"{base}USDT"
+
+            async def get_enabled_exchanges() -> list[str]:
+                return [ex for ex in ["hyperliquid", "aster"] if self.service_manager and self.service_manager.is_service_connected(ex, "futures")]
+
+            bases = []
+            try:
+                bases = self.config.trading.default_futures_symbols or ["BTC", "ETH", "HYPE", "ASTER"]
+            except Exception:
+                bases = ["BTC", "ETH", "HYPE", "ASTER"]
+
             if data == "market_price":
-                message = """
-📈 **Market Prices**
-
-**Popular Symbols:**
-• BTC: $50,000.00 (+5.26%)
-• ETH: $2,800.00 (-3.45%)
-• SOL: $95.50 (+2.15%)
-• AVAX: $35.20 (+1.85%)
-
-Use /price <symbol> [exchange] for specific price information.
-                """
-                from bot.keyboards.main import InlineKeyboardButton, InlineKeyboardMarkup
-                back_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Back to Market", callback_data="menu_market")]
-                ])
+                lines = ["📈 **Futures Prices**\n"]
+                exchanges = await get_enabled_exchanges()
+                for base in bases:
+                    section_lines = [f"**{base}:**"]
+                    for ex in exchanges:
+                        try:
+                            futures = service_manager.get_futures_service(ex)
+                            symbol = base if ex == "hyperliquid" else await aster_symbol(base)
+                            ticker = await futures.get_ticker(symbol)
+                            last_px = float(ticker.last_price) if hasattr(ticker, 'last_price') else 0.0
+                            bid = float(ticker.bid_price) if hasattr(ticker, 'bid_price') else 0.0
+                            ask = float(ticker.ask_price) if hasattr(ticker, 'ask_price') else 0.0
+                            spread = (ask - bid) if (ask and bid) else 0.0
+                            spread_pct = (spread / ((ask + bid) / 2) * 100) if (ask and bid) else 0.0
+                            section_lines.append(f"• {ex.title()}: ${last_px:,.4f} (Bid ${bid:,.4f} / Ask ${ask:,.4f}, Δ ${spread:,.4f} {spread_pct:.3f}%)")
+                        except Exception as e:
+                            section_lines.append(f"• {ex.title()}: N/A")
+                    lines.append("\n".join(section_lines))
+                message = "\n\n".join(lines)
                 await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+
+            elif data == "market_depth":
+                lines = ["📊 **Futures Order Book (Top 5)**\n"]
+                exchanges = await get_enabled_exchanges()
+                for base in bases:
+                    for ex in exchanges:
+                        try:
+                            futures = service_manager.get_futures_service(ex)
+                            symbol = base if ex == "hyperliquid" else await aster_symbol(base)
+                            ob = await futures.get_order_book(symbol, limit=5)
+                            bids = getattr(ob, 'bids', [])[:5]
+                            asks = getattr(ob, 'asks', [])[:5]
+                            lines.append(f"**{base} - {ex.title()}:**")
+                            if bids:
+                                bid_lines = [f"Bid ${float(px):,.4f} | {float(sz):,.4f}" for px, sz in bids]
+                                lines.append("Bids:\n" + "\n".join(bid_lines))
+                            if asks:
+                                ask_lines = [f"Ask ${float(px):,.4f} | {float(sz):,.4f}" for px, sz in asks]
+                                lines.append("Asks:\n" + "\n".join(ask_lines))
+                            lines.append("")
+                        except Exception:
+                            lines.append(f"**{base} - {ex.title()}:** N/A\n")
+                message = "\n".join(lines)
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+
+            elif data == "market_funding":
+                lines = ["💰 **Futures Funding Rates**\n"]
+                exchanges = await get_enabled_exchanges()
+                for base in bases:
+                    section_lines = [f"**{base}:**"]
+                    for ex in exchanges:
+                        try:
+                            futures = service_manager.get_futures_service(ex)
+                            symbol = base if ex == "hyperliquid" else await aster_symbol(base)
+                            fr = await futures.get_funding_rate(symbol)
+                            rate = float(fr.funding_rate)
+                            section_lines.append(f"• {ex.title()}: {rate*100:.4f}%")
+                        except Exception:
+                            section_lines.append(f"• {ex.title()}: N/A")
+                    lines.append("\n".join(section_lines))
+                message = "\n\n".join(lines)
+                await query.edit_message_text(message, parse_mode='Markdown', reply_markup=back_keyboard)
+
             else:
                 await query.edit_message_text("❌ Market feature coming soon")
         except Exception as e:

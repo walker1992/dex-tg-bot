@@ -89,6 +89,8 @@ class TradingConfig:
     default_slippage: float = 0.01
     order_timeout: int = 30
     position_limits: Dict[str, Any] = None
+    # Default futures base symbols for Market Data menu
+    default_futures_symbols: list[str] = None
     
     def __post_init__(self):
         if self.position_limits is None:
@@ -97,6 +99,9 @@ class TradingConfig:
                 "max_total_positions": 10,
                 "max_position_size_usd": 5000.0
             }
+        if self.default_futures_symbols is None:
+            # Official defaults per requirement
+            self.default_futures_symbols = ["BTC", "ETH", "HYPE", "ASTER"]
 
 
 @dataclass

@@ -125,6 +125,7 @@ python src/main.py
 - **telegram**: Telegram Bot配置
 - **exchanges**: 交易所配置
 - **trading**: 交易参数配置
+  - `default_futures_symbols`: 市场数据菜单默认展示的期货基础币种数组（如 `["BTC","ETH","HYPE","ASTER"]`）
 - **risk_management**: 风险管理配置
 - **alerts**: 报警配置
 - **security**: 安全配置
@@ -159,6 +160,16 @@ python src/main.py
 - `/depth <symbol>` - 查询深度
 - `/funding <symbol>` - 查询资金费率
 - `/24h <symbol>` - 24小时价格变化
+
+#### 市场数据菜单（期货）
+- 在主菜单选择 `📈 Market Data`，支持：
+  - **Price**: 展示默认期货币种（可配置）的最新价、买一/卖一、点差与百分比
+  - **Depth**: 展示默认期货币种的前 5 档买卖盘
+  - **Funding Rate**: 展示默认期货币种的当前资金费率
+- 默认展示的期货基础币种通过 `trading.default_futures_symbols` 配置，默认值为 `BTC, ETH, HYPE, ASTER`
+- 符号规范：
+  - **Hyperliquid**: 使用基础名（如 `BTC`, `ETH`）
+  - **Aster**: 使用 `BASEUSDT`（如 `BTCUSDT`, `ETHUSDT`）
 
 ### 报警管理
 - `/alert_price <symbol> <condition> <value>` - 设置价格报警

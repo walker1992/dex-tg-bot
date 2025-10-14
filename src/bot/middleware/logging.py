@@ -17,13 +17,28 @@ class LoggingMiddleware:
         self.request_count = 0
     
     async def log_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Log incoming requests - simplified to only log errors and slow requests"""
+        """Log user actions concisely; suppress low-level HTTP logs elsewhere"""
         start_time = time.time()
         self.request_count += 1
         
         # Extract request information
         user_id = update.effective_user.id if update.effective_user else None
         username = update.effective_user.username if update.effective_user else None
+        first_name = update.effective_user.first_name if update.effective_user else None
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        
+        # Log commands and button clicks
+        try:
+            if update.message and update.message.text and update.message.text.startswith('/'):
+                logger.info(
+                    f"UserAction | Command: {update.message.text} | User: {user_id} (@{username}) {first_name} | Chat: {chat_id}"
+                )
+            elif update.callback_query and update.callback_query.data:
+                logger.info(
+                    f"UserAction | Callback: {update.callback_query.data} | User: {user_id} (@{username}) {first_name} | Chat: {chat_id}"
+                )
+        except Exception:
+            pass
         
         # Only log errors
         if context.error:
