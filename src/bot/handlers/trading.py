@@ -80,7 +80,9 @@ async def _get_all_orders_message(service_manager, exchange: Optional[str] = Non
             message += f"**{ex_title}:**\n"
             for order_info in order_infos:
                 order = order_info['order']
-                side_emoji = "🟢" if order.side.value == "BUY" else "🔴"
+                side_value = getattr(order.side, 'value', order.side)
+                status_value = getattr(order.status, 'value', order.status)
+                side_emoji = "🟢" if str(side_value).upper() == "BUY" else "🔴"
                 price_text = f"${order.price:,.4f}" if order.price else "Market"
 
                 # For Hyperliquid, determine market type based on coin suffix
@@ -90,8 +92,8 @@ async def _get_all_orders_message(service_manager, exchange: Optional[str] = Non
                 else:
                     market_type = order_info['market_type']
 
-                message += f"• {side_emoji} {order.symbol} ({market_type}): {order.side.value} {order.quantity} @ {price_text}\n"
-                message += f"  Order ID: {order.order_id} | Status: {order.status.value}\n"
+                message += f"• {side_emoji} {order.symbol} ({market_type}): {str(side_value)} {order.quantity} @ {price_text}\n"
+                message += f"  Order ID: {order.order_id} | Status: {str(status_value)}\n"
             message += "\n"
 
         return message
