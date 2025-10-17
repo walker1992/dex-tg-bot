@@ -11,11 +11,7 @@
     "webhook_url": "",
     "webhook_port": 8443,
     "allowed_users": [],
-    "admin_users": [],
-    "user_roles": {
-      "123456789": "admin",
-      "987654321": "trader"
-    }
+    "admin_users": []
   },
   "exchanges": {
     "hyperliquid": {
